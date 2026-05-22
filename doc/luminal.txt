@@ -1,0 +1,186 @@
+*luminal.txt*	Terminal-driven dark/light detection via DEC mode 2031
+*luminal*
+
+CONTENTS						*luminal-contents*
+
+Introduction					|luminal-introduction|
+How it works					|luminal-how-it-works|
+Dependencies					|luminal-dependencies|
+Configuration					|luminal-configure|
+Commands					|luminal-commands|
+Autocommands					|luminal-autocommands|
+Obsolescence					|luminal-obsolescence|
+
+==============================================================================
+INTRODUCTION						*luminal-introduction*
+
+vim-luminal makes Vim follow the terminal's dark/light preference: when you
+flip your operating system's (or your terminal's) theme, Vim switches to
+the matching colorscheme on the spot. It also picks the correct starting
+theme the moment Vim opens, instead of always defaulting to "dark".
+
+Unlike plugins that ask the operating system about its current theme,
+vim-luminal does everything over the controlling terminal itself, so it
+works for Vim running on a remote headless server reached over SSH —
+including inside tmux — just as well as it does locally.
+
+
+HOW IT WORKS						*luminal-how-it-works*
+
+Three things have to happen for Vim to track the theme correctly: pick the
+state at startup, react to runtime changes, and tear down cleanly on exit.
+
+Runtime changes ~
+
+On startup the plugin emits `CSI ? 2031 h` (DEC private mode 2031) to
+subscribe to colour-scheme reports from the terminal. The terminal then
+sends a DSR sequence whenever the user's theme changes:
+
+	`CSI ? 997 ; 1 n`	dark theme
+	`CSI ? 997 ; 2 n`	light theme
+
+The plugin parses these replies, updates |'background'|, and (optionally)
+switches |'colorscheme'|. On |VimLeavePre| it sends `CSI ? 2031 l` to
+unsubscribe.
+
+Initial state ~
+
+DEC 2031 is a subscribe-only protocol — some terminals only emit DSR on
+*changes*, and tmux relays runtime changes to inner panes but never replays
+the current state to a freshly-subscribed inner pane. To avoid sitting in
+"unknown" until the first toggle, vim-luminal probes explicitly at startup:
+
+- Inside tmux it asks the multiplexer directly via
+  `tmux display-message -p '#{client_theme}'` (tmux 3.6+).
+- Otherwise it sends an OSC 11 background-colour query
+  (`ESC ] 11 ; ? ESC \`) and converts the rgb reply to dark/light using
+  Rec. 709 relative luminance.
+
+No D-Bus, AppleScript, registry query or other OS-level API is involved;
+everything happens over the same PTY that carries Vim's keyboard input.
+
+------------------------------------------------------------------------------
+DEPENDENCIES						*luminal-dependencies*
+
+- Vim with |echoraw()| (patch 8.2.2351 or newer).
+- A terminal emulator that implements DEC mode 2031.
+  Known to work: Ghostty, foot, Contour, WezTerm.
+- For runtime updates, the terminal (and any intervening multiplexer) must
+  forward DEC 2031 DSR replies to the inner pane. tmux 3.6+ does this for
+  inner panes, and also exposes the outer terminal's theme as
+  `#{client_theme}` plus the hooks `client-dark-theme`/`client-light-theme`.
+
+Initial state (at vim startup) is queried explicitly because a fresh DEC
+2031 subscribe is not enough on its own: some terminals only emit DSR on
+*changes*, and tmux never replays the current state to a freshly-subscribed
+inner pane. The plugin tries, in order:
+
+1. `tmux display-message -p '#{client_theme}'` when |$TMUX| is set.
+2. An OSC 11 background-colour query (`ESC ] 11 ; ? ESC \`) read from
+   `/dev/tty` in raw mode via a short shell child, with light/dark inferred
+   from Rec. 709 luminance — the same approach used by `rod`
+   (https://github.com/leiserfg/rod) and `terminal_colorsaurus`. Requires
+   `sh` and a terminal that answers OSC 11 (xterm, Ghostty, foot, Contour,
+   WezTerm, kitty, Alacritty, vte-based emulators, …).
+
+Runtime theme changes are then driven by DEC 2031 as usual.
+
+------------------------------------------------------------------------------
+CONFIGURATION						*luminal-configure*
+
+There are three independent ways to react to a theme change. They can be
+combined; pick whichever fits the rest of your config best.
+
+1. luminal-native variables ~
+
+	g:luminal_dark_colorscheme		*g:luminal_dark_colorscheme*
+		Colorscheme to apply when the terminal reports dark mode.
+		Equivalent to `autocmd User LuminalDark colorscheme <name>`.
+>
+		let g:luminal_dark_colorscheme = 'moonfly'
+<
+	g:luminal_light_colorscheme		*g:luminal_light_colorscheme*
+		Colorscheme to apply when the terminal reports light mode.
+		Equivalent to `autocmd User LuminalLight colorscheme <name>`.
+>
+		let g:luminal_light_colorscheme = 'PaperColor'
+<
+2. vim-lumen-compatible variables ~
+
+	If the luminal-native variables above are unset, the plugin falls
+	back to |g:lumen_dark_colorscheme| and |g:lumen_light_colorscheme|.
+	An existing |vim-lumen| configuration therefore keeps working
+	unchanged; no duplication required.
+
+3. autocmd on |'background'| ~
+
+	On every theme report the plugin issues `set background=dark|light`,
+	which fires the |OptionSet| event. If neither luminal nor lumen
+	variables are set, no colorscheme is applied automatically and you
+	are free to do it yourself: >
+
+		autocmd OptionSet background
+		      \ execute 'colorscheme '
+		      \ . (&background ==# 'dark' ? 'moonfly' : 'PaperColor')
+<
+	This is the most flexible form and matches the style recommended for
+	vim once issue 17251 lands (see |luminal-obsolescence|).
+
+------------------------------------------------------------------------------
+COMMANDS						*luminal-commands*
+
+							*:LuminalStatus*
+:LuminalStatus		Show subscription state, last reported theme,
+			current |'background'| and |'colors_name'|, the
+			configured colorscheme names, |'term'|/|$TERM|,
+			whether vim is running inside tmux, and which probe
+			(see |luminal-dependencies|) supplied the initial
+			state together with the result it returned.
+
+							*:LuminalRefresh*
+:LuminalRefresh		Send `CSI ? 2031 l` followed by `CSI ? 2031 h`. Most
+			terminals reply with a fresh DSR after a resubscribe,
+			which is useful when you suspect the plugin missed an
+			event.
+
+							*:LuminalSubscribe*
+:LuminalSubscribe	Send `CSI ? 2031 h` (subscribe). Done automatically
+			on |VimEnter|.
+
+							*:LuminalUnsubscribe*
+:LuminalUnsubscribe	Send `CSI ? 2031 l` (unsubscribe). Done automatically
+			on |VimLeavePre|.
+
+------------------------------------------------------------------------------
+AUTOCOMMANDS						*luminal-autocommands*
+
+In addition to the standard |OptionSet| event for |'background'|, two |User|
+|autocommands| are provided for more generic hooks: >
+
+	autocmd User LuminalDark let $BAT_THEME = 'gruvbox-dark'
+<
+							*User_LuminalLight*
+LuminalLight		Fired after switching |'background'| to `light`.
+
+							*User_LuminalDark*
+LuminalDark		Fired after switching |'background'| to `dark`.
+
+------------------------------------------------------------------------------
+OBSOLESCENCE						*luminal-obsolescence*
+
+This plugin will become obsolete once native DEC mode 2031 support lands in
+vim itself, tracked upstream as:
+
+	https://github.com/vim/vim/issues/17251
+
+When that happens, vim will subscribe to and parse the DSR replies on its
+own, exposing the result through |'background'|/|OptionSet| with no plugin
+required. The recommended migration path is therefore configuration form 3
+above (|OptionSet| autocmd): your vimrc keeps working unchanged the moment
+you remove this plugin.
+
+Neovim already ships equivalent functionality; see:
+	https://github.com/neovim/neovim/pull/31350
+
+==============================================================================
+	vim:tw=78:sw=4:ts=8:ft=help:norl:noet:
