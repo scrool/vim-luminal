@@ -158,9 +158,12 @@ COMMANDS						*luminal-commands*
 :LuminalStatus		Show subscription state, last reported theme,
 			current |'background'| and |'colors_name'|, the
 			configured colorscheme names, |'term'|/|$TERM|,
-			whether vim is running inside tmux, and which probe
+			whether vim is running inside tmux, which probe
 			(see |luminal-dependencies|) supplied the initial
-			state together with the result it returned.
+			state together with the result it returned, and
+			timings for |luminal#init()| and the most recent
+			tmux query so you can quantify the overhead the
+			plugin adds to startup.
 
 							*:LuminalRefresh*
 :LuminalRefresh		Send `CSI ? 2031 l` followed by `CSI ? 2031 h`. Most

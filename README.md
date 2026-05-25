@@ -169,7 +169,7 @@ support lands in Vim itself (see *Status*).
 
 | Command                | Description                                          |
 | ---------------------- | ---------------------------------------------------- |
-| `:LuminalStatus`       | Show subscription state, last detected theme, current `'background'`/`'colors_name'`, configured colorschemes, `&term`/`$TERM`, tmux state, and which probe supplied the initial value. |
+| `:LuminalStatus`       | Show subscription state, last detected theme, current `'background'`/`'colors_name'`, configured colorschemes, `&term`/`$TERM`, tmux state, which probe supplied the initial value, and timings (init cost and last tmux query) so you can quantify the plugin's startup overhead. |
 | `:LuminalRefresh`      | Send `CSI ? 2031 l` then `CSI ? 2031 h` (some terminals reply with a fresh DSR after a resubscribe). |
 | `:LuminalSubscribe`    | Send `CSI ? 2031 h` manually. Done automatically on `VimEnter`. |
 | `:LuminalUnsubscribe`  | Send `CSI ? 2031 l` manually. Done automatically on `VimLeavePre`. |

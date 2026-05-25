@@ -8,6 +8,12 @@ let s:subscribed = 0
 let s:initial_source = ''
 let s:initial_result = ''
 
+" Startup-cost diagnostics. luminal#init() runs from VimEnter and its
+" headline cost inside tmux is a `tmux list-clients` fork; measure both
+" so the user can quantify the overhead the plugin adds.
+let s:init_ms = -1
+let s:tmux_query_ms = -1
+
 " Persistent debug log. Off by default; flip g:luminal_debug = 1
 " anywhere before vim startup completes to capture every subscribe,
 " unsubscribe and on_dark/on_light call together with the call-stack,
@@ -34,6 +40,7 @@ func! s:resolve(name) abort
 endfunc
 
 func! luminal#init() abort
+    let t0 = reltime()
     call s:log('init: tmux=' . (!empty($TMUX) ? 'yes' : 'no')
                 \ . ' term=' . &term . ' TERM=' . $TERM)
     call luminal#subscribe()
@@ -50,6 +57,9 @@ func! luminal#init() abort
     elseif initial ==# 'dark'
         call luminal#on_dark()
     endif
+    let s:init_ms = reltimefloat(reltime(t0)) * 1000.0
+    call s:log(printf('init: done in %.2f ms (tmux query %.2f ms)',
+                \ s:init_ms, s:tmux_query_ms))
 endfunc
 
 " Reusable: ask tmux which theme is current for the user actually
@@ -65,9 +75,11 @@ func! luminal#tmux_theme() abort
     if empty($TMUX) || !executable('tmux')
         return ''
     endif
+    let t0 = reltime()
     let target = empty($TMUX_PANE) ? '' : ' -t ' . shellescape($TMUX_PANE)
     let raw = system('tmux list-clients' . target
                 \ . " -F '#{client_activity} #{client_theme}'")
+    let s:tmux_query_ms = reltimefloat(reltime(t0)) * 1000.0
     if v:shell_error
         return ''
     endif
@@ -244,6 +256,12 @@ func! luminal#status() abort
     echo '  inside tmux        : ' . (!empty($TMUX) ? 'yes' : 'no')
     echo '  initial probe      : ' . (empty(s:initial_source) ? '(none)' : s:initial_source)
                 \ . ' -> ' . (empty(s:initial_result) ? '(failed)' : s:initial_result)
+    echo '  init cost          : '
+                \ . (s:init_ms < 0 ? '(not measured)'
+                \ : printf('%.2f ms', s:init_ms))
+    echo '  last tmux query    : '
+                \ . (s:tmux_query_ms < 0 ? '(not measured)'
+                \ : printf('%.2f ms', s:tmux_query_ms))
     if get(g:, 'luminal_debug', 0)
         echo '  debug log          : ' . get(g:, 'luminal_debug_file',
                     \ expand('~/.cache/vim/luminal.log'))
