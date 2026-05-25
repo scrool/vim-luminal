@@ -8,6 +8,24 @@ let s:subscribed = 0
 let s:initial_source = ''
 let s:initial_result = ''
 
+" Persistent debug log. Off by default; flip g:luminal_debug = 1
+" anywhere before vim startup completes to capture every subscribe,
+" unsubscribe and on_dark/on_light call together with the call-stack,
+" so a spurious theme flip can be traced back to whatever triggered
+" it. Writes to file only — never echoes — so it cannot cause a
+" hit-enter prompt.
+func! s:log(msg) abort
+    if !get(g:, 'luminal_debug', 0)
+        return
+    endif
+    let path = get(g:, 'luminal_debug_file', expand('~/.cache/vim/luminal.log'))
+    let dir = fnamemodify(path, ':h')
+    if !isdirectory(dir)
+        call mkdir(dir, 'p')
+    endif
+    call writefile([strftime('%F %T') . ' ' . a:msg], path, 'a')
+endfunc
+
 func! s:resolve(name) abort
     " Prefer luminal_*; fall back to lumen_* so an existing vim-lumen
     " setup is honoured without duplicating config.
@@ -16,6 +34,8 @@ func! s:resolve(name) abort
 endfunc
 
 func! luminal#init() abort
+    call s:log('init: tmux=' . (!empty($TMUX) ? 'yes' : 'no')
+                \ . ' term=' . &term . ' TERM=' . $TERM)
     call luminal#subscribe()
     " A fresh DEC 2031 subscribe is not enough on its own: some
     " terminals only emit DSR on theme *changes* (not on subscribe),
@@ -23,6 +43,8 @@ func! luminal#init() abort
     " replays the current state. Without an explicit initial probe we
     " would sit in 'unknown' until the user first toggles the theme.
     let initial = s:initial_state()
+    call s:log('init: initial probe ' . s:initial_source
+                \ . ' -> ' . (empty(initial) ? '(failed)' : initial))
     if initial ==# 'light'
         call luminal#on_light()
     elseif initial ==# 'dark'
@@ -89,11 +111,13 @@ endfunc
 func! luminal#subscribe() abort
     call echoraw("\e[?2031h")
     let s:subscribed = 1
+    call s:log('-> CSI ? 2031 h  (subscribe)')
 endfunc
 
 func! luminal#unsubscribe() abort
     call echoraw("\e[?2031l")
     let s:subscribed = 0
+    call s:log('-> CSI ? 2031 l  (unsubscribe)')
 endfunc
 
 func! luminal#refresh() abort
@@ -112,6 +136,8 @@ func! luminal#apply() abort
 endfunc
 
 func! luminal#on_dark() abort
+    call s:log('<- dark  (prev state=' . s:state . ' bg=' . &background
+                \ . ')  stack: ' . expand('<stack>'))
     if s:state ==# 'dark' && &background ==# 'dark'
         return
     endif
@@ -124,6 +150,8 @@ func! luminal#on_dark() abort
 endfunc
 
 func! luminal#on_light() abort
+    call s:log('<- light (prev state=' . s:state . ' bg=' . &background
+                \ . ')  stack: ' . expand('<stack>'))
     if s:state ==# 'light' && &background ==# 'light'
         return
     endif
@@ -147,4 +175,8 @@ func! luminal#status() abort
     echo '  inside tmux        : ' . (!empty($TMUX) ? 'yes' : 'no')
     echo '  initial probe      : ' . (empty(s:initial_source) ? '(none)' : s:initial_source)
                 \ . ' -> ' . (empty(s:initial_result) ? '(failed)' : s:initial_result)
+    if get(g:, 'luminal_debug', 0)
+        echo '  debug log          : ' . get(g:, 'luminal_debug_file',
+                    \ expand('~/.cache/vim/luminal.log'))
+    endif
 endfunc
