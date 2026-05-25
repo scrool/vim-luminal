@@ -52,16 +52,50 @@ func! luminal#init() abort
     endif
 endfunc
 
+" Reusable: ask tmux which theme is current for the user actually
+" controlling this pane right now. Returns 'light', 'dark' or ''.
+"
+" When a single tmux session is attached from multiple clients (e.g.
+" the same session followed over ssh from two terminals whose OS
+" themes differ), a bare `tmux display-message '#{client_theme}'`
+" picks an arbitrary client. Instead we list every client attached to
+" this pane's session and choose the one with the most recent input
+" activity — that's the user who is actually typing.
+func! luminal#tmux_theme() abort
+    if empty($TMUX) || !executable('tmux')
+        return ''
+    endif
+    let target = empty($TMUX_PANE) ? '' : ' -t ' . shellescape($TMUX_PANE)
+    let raw = system('tmux list-clients' . target
+                \ . " -F '#{client_activity} #{client_theme}'")
+    if v:shell_error
+        return ''
+    endif
+    let best_t = -1
+    let best_theme = ''
+    for line in split(raw, "\n")
+        let parts = matchlist(line, '^\(\d\+\)\s\+\(\S*\)$')
+        if empty(parts)
+            continue
+        endif
+        let t = str2nr(parts[1])
+        let th = parts[2]
+        if (th ==# 'light' || th ==# 'dark') && t > best_t
+            let best_t = t
+            let best_theme = th
+        endif
+    endfor
+    return best_theme
+endfunc
+
 func! s:initial_state() abort
     " Inside tmux, ask the multiplexer directly — it tracks the outer
     " terminal's theme as #{client_theme} from 3.6+.
-    if !empty($TMUX) && executable('tmux')
-        let t = trim(system("tmux display-message -p '#{client_theme}'"))
-        if t ==# 'light' || t ==# 'dark'
-            let s:initial_source = "tmux '#{client_theme}'"
-            let s:initial_result = t
-            return t
-        endif
+    let t = luminal#tmux_theme()
+    if t ==# 'light' || t ==# 'dark'
+        let s:initial_source = "tmux '#{client_theme}'"
+        let s:initial_result = t
+        return t
     endif
     " Otherwise query the terminal's background colour via OSC 11 and
     " infer light/dark from luminance — same approach as `rod`
@@ -127,6 +161,19 @@ func! luminal#refresh() abort
     call luminal#subscribe()
 endfunc
 
+" When the same tmux session is attached from multiple clients with
+" different OS themes, the active controlling client can change without
+" any DEC 2031 traffic reaching this pane. Re-ask tmux and dispatch if
+" the answer differs from the last known state.
+func! luminal#refresh_from_tmux() abort
+    let t = luminal#tmux_theme()
+    if t ==# 'dark' && s:state !=# 'dark'
+        call luminal#on_dark()
+    elseif t ==# 'light' && s:state !=# 'light'
+        call luminal#on_light()
+    endif
+endfunc
+
 func! luminal#apply() abort
     let name = s:resolve(s:state)
     if empty(name) || get(g:, 'colors_name', '') ==# name
@@ -138,6 +185,19 @@ endfunc
 func! luminal#on_dark() abort
     call s:log('<- dark  (prev state=' . s:state . ' bg=' . &background
                 \ . ')  stack: ' . expand('<stack>'))
+    " Inside tmux, DEC 2031 replies relayed to inner panes can come
+    " from a different (or stale) client than the one currently in
+    " control — e.g. when the same session is attached from multiple
+    " terminals with different themes. luminal#tmux_theme() is the
+    " authoritative answer for "who's typing right now"; if it
+    " disagrees, drop the DSR.
+    if !empty($TMUX)
+        let t = luminal#tmux_theme()
+        if t ==# 'light'
+            call s:log('   ignored: tmux says light')
+            return
+        endif
+    endif
     if s:state ==# 'dark' && &background ==# 'dark'
         return
     endif
@@ -152,6 +212,15 @@ endfunc
 func! luminal#on_light() abort
     call s:log('<- light (prev state=' . s:state . ' bg=' . &background
                 \ . ')  stack: ' . expand('<stack>'))
+    " See note in luminal#on_dark(): inside tmux, cross-check the DSR
+    " against the active client and drop it if they disagree.
+    if !empty($TMUX)
+        let t = luminal#tmux_theme()
+        if t ==# 'dark'
+            call s:log('   ignored: tmux says dark')
+            return
+        endif
+    endif
     if s:state ==# 'light' && &background ==# 'light'
         return
     endif

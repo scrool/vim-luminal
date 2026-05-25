@@ -7,8 +7,10 @@ Terminal-driven dark/light detection for Vim:
   through OSC 11 and converting the rgb reply to dark/light via Rec. 709
   relative luminance;
 - has **first-class support** for Vim running inside tmux (uses
-  `#{client_theme}` for the initial probe, and DEC 2031 forwarded by tmux for
-  runtime updates).
+  `#{client_theme}` for the initial probe, DEC 2031 forwarded by tmux for
+  runtime updates, and a `list-clients`-by-activity query to stay correct
+  when the same tmux session is attached from multiple clients with
+  different themes).
 
 Everything happens over the controlling terminal — no D-Bus, AppleScript or
 Windows registry lookups, and therefore no dependency on a graphical desktop
@@ -44,13 +46,25 @@ installed on the remote.
 3. The current state at startup is queried explicitly, because not all
    terminals reply on subscribe and tmux never replays the current state to
    a freshly-subscribed inner pane:
-   - inside tmux: `tmux display-message -p '#{client_theme}'` (3.6+);
+   - inside tmux: `tmux list-clients -t $TMUX_PANE -F '#{client_activity}
+     #{client_theme}'`, then the theme of the client with the most recent
+     input activity is taken — this is the user actually in control;
    - otherwise: OSC 11 (`ESC ] 11 ; ? ESC \`) is sent via a short shell
      child reading `/dev/tty` in raw mode, and the rgb reply is converted
      to light/dark via Rec. 709 relative luminance — the same approach
      used by [`rod`](https://github.com/leiserfg/rod) and
      [`terminal_colorsaurus`](https://crates.io/crates/terminal-colorsaurus).
-4. On `VimLeavePre`, `CSI ? 2031 l` is sent to unsubscribe cleanly.
+4. Inside tmux, the same `list-clients` query is re-issued on the standard
+   "user came back" and "user went idle" autocmds (`FocusGained`,
+   `CursorHold`, `CursorHoldI`). This catches the case where the same tmux
+   session is attached from **multiple clients with different themes**:
+   when you switch from the dark-themed terminal to the light-themed one
+   (or vice versa), Vim picks up the change without any tmux config.
+5. For the same multi-client setup, DSR replies arriving via the input
+   mappings are cross-checked against the active tmux client's theme and
+   silently dropped when they disagree, so a stale DSR from a non-active
+   client can't override the correct state.
+6. On `VimLeavePre`, `CSI ? 2031 l` is sent to unsubscribe cleanly.
 
 ## Requirements
 

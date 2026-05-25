@@ -51,10 +51,29 @@ the current state to a freshly-subscribed inner pane. To avoid sitting in
 "unknown" until the first toggle, vim-luminal probes explicitly at startup:
 
 - Inside tmux it asks the multiplexer directly via
-  `tmux display-message -p '#{client_theme}'` (tmux 3.6+).
+  `tmux list-clients -t $TMUX_PANE -F '#{client_activity} #{client_theme}'`
+  and picks the theme of the client with the most recent input activity —
+  the user actually in control of the pane (tmux 3.6+).
 - Otherwise it sends an OSC 11 background-colour query
   (`ESC ] 11 ; ? ESC \`) and converts the rgb reply to dark/light using
   Rec. 709 relative luminance.
+
+Multi-client tmux sessions ~
+
+When the same tmux session is attached from more than one client (for
+example, the same session followed over SSH from two terminals whose OS
+themes differ), the "current" theme can change without any DEC 2031
+traffic — simply by the user starting to type into a different client. To
+keep up:
+
+- The `list-clients` query above is re-issued on |FocusGained|,
+  |CursorHold| and |CursorHoldI|, the same canonical triggers Vim's own
+  |:checktime| and plugins like vim-gitgutter use to pick up out-of-band
+  state changes.
+- DSR replies arriving over the input mappings are cross-checked against
+  the active client's theme and silently dropped when they disagree, so a
+  stale DSR relayed from a non-active client cannot override the correct
+  state.
 
 No D-Bus, AppleScript, registry query or other OS-level API is involved;
 everything happens over the same PTY that carries Vim's keyboard input.
@@ -67,15 +86,17 @@ DEPENDENCIES						*luminal-dependencies*
   Known to work: Ghostty, foot, Contour, WezTerm.
 - For runtime updates, the terminal (and any intervening multiplexer) must
   forward DEC 2031 DSR replies to the inner pane. tmux 3.6+ does this for
-  inner panes, and also exposes the outer terminal's theme as
-  `#{client_theme}` plus the hooks `client-dark-theme`/`client-light-theme`.
+  inner panes, and also exposes each attached client's theme as
+  `#{client_theme}`.
 
 Initial state (at vim startup) is queried explicitly because a fresh DEC
 2031 subscribe is not enough on its own: some terminals only emit DSR on
 *changes*, and tmux never replays the current state to a freshly-subscribed
 inner pane. The plugin tries, in order:
 
-1. `tmux display-message -p '#{client_theme}'` when |$TMUX| is set.
+1. `tmux list-clients -t $TMUX_PANE -F '#{client_activity}
+   #{client_theme}'` when |$TMUX| is set, picking the theme of the client
+   with the most recent input activity.
 2. An OSC 11 background-colour query (`ESC ] 11 ; ? ESC \`) read from
    `/dev/tty` in raw mode via a short shell child, with light/dark inferred
    from Rec. 709 luminance — the same approach used by `rod`
@@ -83,7 +104,11 @@ inner pane. The plugin tries, in order:
    `sh` and a terminal that answers OSC 11 (xterm, Ghostty, foot, Contour,
    WezTerm, kitty, Alacritty, vte-based emulators, …).
 
-Runtime theme changes are then driven by DEC 2031 as usual.
+Runtime theme changes are then driven by DEC 2031 as usual. Additionally,
+inside tmux the same `list-clients` query is re-issued on |FocusGained|,
+|CursorHold| and |CursorHoldI| to keep up with multi-client sessions whose
+active client (and therefore "current" theme) can change without any DEC
+2031 traffic reaching this pane.
 
 ------------------------------------------------------------------------------
 CONFIGURATION						*luminal-configure*

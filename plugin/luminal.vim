@@ -52,4 +52,15 @@ augroup luminal
     autocmd!
     autocmd VimEnter     * call luminal#init()
     autocmd VimLeavePre  * call luminal#unsubscribe()
+    " Inside tmux, the OS theme can effectively change without any DEC
+    " 2031 traffic — e.g. when the same session is followed from two
+    " clients with different themes and the user switches between them.
+    " Re-ask tmux on the standard "user came back" / "user went idle"
+    " events; the canonical Vim idiom for picking up out-of-band state
+    " changes (same one :checktime and gitgutter use).
+    if !empty($TMUX)
+        autocmd FocusGained * call luminal#refresh_from_tmux()
+        autocmd CursorHold  * call luminal#refresh_from_tmux()
+        autocmd CursorHoldI * call luminal#refresh_from_tmux()
+    endif
 augroup END
